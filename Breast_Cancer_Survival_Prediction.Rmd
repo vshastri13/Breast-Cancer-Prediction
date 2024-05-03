@@ -1,0 +1,321 @@
+---
+title: "Final_Project_EDA"
+author: "Vaishnavi Shastri"
+date: "2024-04-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(broom)
+library(mgcv)
+library(arm)
+library(GGally)
+```
+
+
+```{r}
+BRCA <- read.csv("/Users/vaishnavishastri/Desktop/EDA/Final_project/BRCA.csv")
+BRCA <- na.omit(BRCA)
+BRCA1<- na.omit(BRCA)
+data1 <- BRCA[, !(names(BRCA) %in% c("Patient_ID", "Date_of_Last_Visit", "Date_of_Surgery"))]
+```
+
+
+```{r}
+categorical_vars <- data1 %>% 
+  select_if(~!is.numeric(.) & !inherits(., "Date"))
+
+bar_charts <- lapply(names(categorical_vars), function(var) {
+  gg <- ggplot(data1, aes_string(x = var)) +
+    geom_bar(fill = "steelblue", color = "black") +
+    theme_minimal() +
+    labs(title = paste("Distribution of", var), x = var, y = "Count") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+  
+  print(gg) 
+})
+
+for(i in seq_along(bar_charts)) {
+  ggsave(filename = paste0("bar_chart_", names(bar_charts)[i], ".png"),
+         plot = bar_charts[[i]], width = 8, height = 6)
+}
+```
+
+```{r}
+
+library(survival)
+library(survminer)
+
+
+BRCA1$Date_of_Surgery <- as.Date(BRCA1$Date_of_Surgery, format = "%d-%b-%y")
+BRCA1$Date_of_Last_Visit <- as.Date(BRCA1$Date_of_Last_Visit, format = "%d-%b-%y")
+
+```
+
+```{r}
+
+BRCA1$Time <- as.numeric(difftime(BRCA1$Date_of_Last_Visit, BRCA1$Date_of_Surgery, units = "days"))
+
+
+BRCA1$status_new <- ifelse(BRCA1$Patient_Status == "Dead", 1, 0)
+
+```
+
+```{r}
+palette <- c("#377eb8", "#ff7f00", "#4daf4a", "#f781bf", "#a65628", "#984ea3")
+
+surv_object <- Surv(time = BRCA1$Time, event = BRCA1$status_new)
+
+fit <- survfit(surv_object ~ HER2.status + Tumour_Stage, data = BRCA1)
+
+surv_plot <- ggsurvplot(
+  fit, 
+  data = BRCA1, 
+  palette = palette, 
+  pval = TRUE, 
+  risk.table = FALSE, 
+  ggtheme = theme_minimal(),
+  legend.position = "right", 
+  legend.labs = c("HER2-, Stage I", "HER2-, Stage II", "HER2-, Stage III", "HER2+, Stage I", "HER2+, Stage II", "HER2+, Stage III"), 
+  legend.title = element_blank(), 
+  legend.text = element_text(size = 12), 
+  legend.key.size = unit(1, "cm"), 
+  legend.margin = margin(1, 1, 1, 1, "cm"), 
+  plot.margin = margin(1, 1, 1, 1, "cm") 
+)
+
+print(surv_plot)
+
+
+```
+
+
+```{r}
+BRCA$HER2.status <- ifelse(BRCA$HER2.status == "Positive", 1, 0)
+BRCA$Patient_Status <- ifelse(BRCA$Patient_Status == "Alive", 1, 0)
+stage_mapping <- c("I" = 1, "II" = 2, "III" = 3)
+stage_mapping_names <- c("I" = 'Stage I', "II" = 'Stage II', "III" = 'Stage III')
+BRCA$Tumour_Stage_converted <- stage_mapping[BRCA$Tumour_Stage]
+BRCA$Tumour_Stage_names <- stage_mapping_names[BRCA$Tumour_Stage]
+histology_mapping <- c("Infiltrating Ductal Carcinoma" = 3, "Mucinous Carcinoma" = 1, "Infiltrating Lobular Carcinoma" = 2)
+BRCA$Histology <- histology_mapping[BRCA$Histology]
+```
+
+
+
+# Checking HER2 vs Patient survival status
+
+
+```{r}
+ggplot(BRCA, aes(HER2.status, Patient_Status)) +
+  geom_point() + 
+  ggtitle("Probability of patient survival based on HER2 Status") +
+  ylab("Probability of patient survival") +
+  xlab("HER2 status") +
+  labs(caption = "Data from Kaggle over the range of 4 years from 2017 to 2021 ") +
+  geom_smooth(method = "glm", method.args = list(family = "binomial"), se = FALSE) +
+  scale_x_continuous(breaks = c(0, 1), labels = c("Negative", "Positive"))
+
+```
+
+The graph depicts the probability of patient survival as it relates to HER2 status, with two distinct categories: Negative and Positive. The plotted points suggest a marginal difference in survival probability between the two HER2 status groups, with Positive status showing a slight increase. However, given the points for both categories are clustered near the top of the graph and the line of best fit indicates only a subtle upward trend, it can be inferred that HER2 status, in this dataset, may not be a strong standalone predictor of survival. Additional context, such as confidence intervals or p-values, would be necessary for a more definitive conclusion. It's also important to note that the survival probability for both statuses is relatively high, suggesting that factors beyond HER2 status could be significant contributors to survival, which warrants further investigation.
+
+
+# Patient survival status based on Histology 
+
+
+```{r}
+ggplot(BRCA, aes(x = Histology , y = Patient_Status)) +
+  geom_point() +
+  ggtitle("Probability of patient survival based on Histology") +
+  ylab("Probability of patient survival") +
+  xlab("Histology Types") +
+  labs(caption = "Data from Kaggle over the range of 4 years from 2017 to 2021 ") +
+  geom_smooth(method = 'glm', se = FALSE, method.args = list(family = "binomial")) +
+  geom_jitter()+
+  scale_x_continuous(breaks = c(1,2,3), labels = c("Mucinous Carcinoma", "Infiltrating Lobular Carcinoma","Infiltrating Ductal Carcinoma"))
+```
+
+# Patient survival status based on Tumour Stage
+
+# Average patient survival for every stage
+
+```{r}
+average_alive_count_stage1 <- mean(BRCA$Patient_Status[BRCA$Tumour_Stage_converted == 1])
+average_alive_count_stage1
+average_alive_count_stage2 <- mean(BRCA$Patient_Status[BRCA$Tumour_Stage_converted == 2])
+average_alive_count_stage2
+average_alive_count_stage3 <- mean(BRCA$Patient_Status[BRCA$Tumour_Stage_converted == 3])
+average_alive_count_stage3 
+```
+
+Here, the survival chances of patients in stage 1 is 79%, in stage 2 is 76% and in stage 3 is 74%. Even though the chances of survival decreases as the tumour stage increases, the difference is not that high. Hence, the tumour stage alone cannot be the parameter on which the patients' survival depends.
+Same can be oberved from the Graph below.
+
+
+```{r}
+ggplot(BRCA, aes(x = Tumour_Stage_converted , y = Patient_Status)) +
+  geom_point() +
+  ggtitle("Probability of patient survival based on Tumour Stages") +
+  ylab("Probability of patient survival") +
+  xlab("Tumour Stages") +
+  labs(caption = "Data from Kaggle over the range of 4 years from 2017 to 2021 ") +
+  geom_smooth(method = 'glm', se = FALSE, method.args = list(family = "binomial")) +
+  geom_jitter()+
+  scale_x_continuous(breaks = c(1,2,3), labels = c("Stage I", "Stage II","Stage III"))
+```
+
+# Lets Explore Proteins with Tumour Stages !!
+
+```{r}
+glmPro11 <- glm(Patient_Status ~  Protein1 + Tumour_Stage_converted, family = binomial, data = BRCA)
+BIC(glmPro11)
+
+glmPro12 <- glm(Patient_Status ~ Protein1 * Tumour_Stage_converted, family = binomial, data = BRCA)
+BIC(glmPro12)
+
+glmPro21 <- glm(Patient_Status ~  Protein2 + Tumour_Stage_converted, family = binomial, data = BRCA)
+BIC(glmPro21)
+
+
+glmPro22 <- glm(Patient_Status ~ Protein2 * Tumour_Stage_converted, family = binomial, data = BRCA)
+BIC(glmPro22)
+
+glmPro31 <- glm(Patient_Status ~  Protein3 + Tumour_Stage_converted, family = binomial, data = BRCA)
+BIC(glmPro31)
+
+
+glmPro32 <- glm(Patient_Status ~ Protein3 * Tumour_Stage_converted, family = binomial, data = BRCA)
+BIC(glmPro32)
+
+glmPro41 <- glm(Patient_Status ~  Protein4 + Tumour_Stage_converted, family = binomial, data = BRCA)
+BIC(glmPro41)
+
+glmPro42 <- glm(Patient_Status ~ Protein4 * Tumour_Stage_converted, family = binomial, data = BRCA)
+BIC(glmPro42)
+
+```
+
+Here the BIC value of Protein4 and Tumour_Stage interaction is lowest which is why we are choosing the protein4 and Tumour stage as our further variables to predict the relationship of patient survival.
+
+
+## Introducing age as a dependent parameter
+
+
+```{r}
+glmAgeProStat <- glm(Patient_Status ~ Age + Protein4 + Tumour_Stage_converted, family = binomial, data = BRCA)
+glmAgeProStat1 <- glm(Patient_Status ~ Age + Protein4 * Tumour_Stage_converted, family = binomial, data = BRCA)
+glmAgeProStat1.pred <- predict(glmAgeProStat1, newdata = BRCA, type = 'response')
+```
+
+
+```{r}
+BIC(glmAgeProStat)
+BIC(glmAgeProStat1)
+```
+
+```{r}
+BRCA <- data.frame(BRCA,glmAgeProStat1.pred = glmAgeProStat1.pred)
+```
+
+```{r, warning=FALSE}
+ggplot(BRCA, aes(x = Age , y = glmAgeProStat1.pred, color = Protein4)) +
+  geom_point() +
+  ggtitle("Probability of patient survival based on Age and Protein4 per tumour stage") +
+  ylab("Probability of patient survival") +
+  xlab("Age of patients in years") +
+  labs(caption = "Data from Kaggle over the range of 4 years from 2017 to 2021 ") +
+  geom_smooth(method = 'glm', se = FALSE, method.args = list(family = "binomial")) +
+  facet_wrap(~Tumour_Stage_names) +
+  scale_colour_viridis_c()
+```
+# Adding checking the interaction of HER2 with Protein4 and tumour stage:
+
+```{r}
+glmProHer11 <- glm(Patient_Status ~  (HER2.status) + (Protein1 + Tumour_Stage_converted), family = binomial, data = BRCA)
+BIC(glmProHer11)
+glmProHER11.pred <- predict(glmProHer11, newdata = BRCA, type = 'response')
+
+glmProHER12 <- glm(Patient_Status ~ (HER2.status) + (Protein1 * Tumour_Stage_converted), family = binomial, data = BRCA)
+BIC(glmProHER12)
+
+glmProHER21 <- glm(Patient_Status ~ (HER2.status) + (Protein2 + Tumour_Stage_converted), family = binomial, data = BRCA)
+BIC(glmProHER21)
+glmProHER21.pred <- predict(glmProHER21, newdata = BRCA, type = 'response')
+
+glmProHER22 <- glm(Patient_Status ~ (HER2.status) + (Protein2 * Tumour_Stage_converted), family = binomial, data = BRCA)
+BIC(glmProHER22)
+
+glmProHER31 <- glm(Patient_Status ~  (HER2.status) + (Protein3 + Tumour_Stage_converted), family = binomial, data = BRCA)
+BIC(glmProHER31)
+glmProHER31.pred <- predict(glmProHER31, newdata = BRCA, type = 'response')
+
+glmProHER32 <- glm(Patient_Status ~ (HER2.status) + (Protein3 * Tumour_Stage_converted), family = binomial, data = BRCA)
+BIC(glmProHER32)
+
+glmProHER41 <- glm(Patient_Status ~  (HER2.status) + (Protein4 + Tumour_Stage_converted), family = binomial, data = BRCA)
+BIC(glmProHER41)
+
+glmProHER42 <- glm(Patient_Status ~ HER2.status + Protein4 * Tumour_Stage_converted, family = binomial, data = BRCA)
+BIC(glmProHER42)
+glmProHER42.pred <- predict(glmProHER42, newdata = BRCA, type = 'response')
+
+```
+
+```{r}
+BRCA <- data.frame(BRCA,glmProHER42.pred = glmProHER42.pred)
+```
+
+
+```{r, warning= FALSE}
+
+ggplot(BRCA, aes(x = Protein4, y = glmProHER42.pred)) +
+  geom_point() + 
+  ggtitle("Probability of patient survival based on Protein4 per tumour stage") +
+  ylab("Probability of patient survival") +
+  xlab("Protein4 Values") + 
+  labs(caption = "Data from Kaggle over the range of 4 years from 2017 to 2021 ") +
+  geom_smooth(method = "glm" ,method.args = list(family = "binomial"), se = FALSE) + 
+  facet_grid( ~ Tumour_Stage_names) +
+  scale_color_viridis_c() +
+  theme_minimal()
+```
+
+
+```{r}
+glmAgeProAgeHer2 <- glm(Patient_Status ~ Age + (HER2.status) + (Protein4 + Tumour_Stage_converted), family = binomial, data = BRCA)
+glmAgeProAgeHer21 <- glm(Patient_Status ~ Age + (HER2.status) * (Protein4 + Tumour_Stage_converted), family = binomial, data = BRCA)
+BIC(glmAgeProAgeHer2)
+BIC(glmAgeProAgeHer21)
+
+```
+
+```{r}
+glmProHER42.pred <- predict(glmProHER42, newdata = BRCA, type = 'response')
+BRCA <- data.frame(BRCA,glmProHER42.pred = glmProHER42.pred)
+
+```
+
+
+
+```{r, warning=FALSE}
+
+# Plotting code without converting HER2_status
+ggplot(BRCA, aes(x = Age, y = glmProHER42.pred, color = Protein4)) +
+  geom_point(alpha = 0.6) +
+  ggtitle("Probability of Survival based on Age, Protein4,HER2 Status and Tumour Stage") +
+  labs(y = "Probability of Patient Survival", 
+       x = "Age of patients in years", 
+       caption = "Data from Kaggle over the range of 4 years from 2017 to 2021") +
+  geom_smooth(method = 'glm', se = FALSE, method.args = list(family = "binomial")) +
+  facet_grid(HER2.status ~ Tumour_Stage_names, 
+             labeller = labeller(HER2.status = c("0" = "Negative", "1" = "Positive"))) +
+  scale_color_viridis_c() +
+  theme_minimal()
+
+```
+
+
+
